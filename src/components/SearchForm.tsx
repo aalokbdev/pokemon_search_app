@@ -1,15 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { FixedSizeList as List } from "react-window";
-import AutoSizer from "react-virtualized-auto-sizer";
+import { useEffect, useState, useRef } from "react";
 import {
   fetchAllPokemon,
   fetchPokemonByType,
   fetchTypes,
   searchPokemonByName,
 } from "../services/pokemonService";
-import { Pokemon, RowProps } from "../types/types";
+import { Pokemon } from "../types/types";
 import PokemonCard from "./PokemonCard";
 
 export default function SearchForm() {
@@ -19,36 +17,37 @@ export default function SearchForm() {
   const [selectedType, setSelectedType] = useState("all");
   const [searchSubmitted, setSearchSubmitted] = useState(false);
   const [searchValue, setSearchValue] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [hasMore, setHasMore] = useState(true);
   const [offset, setOffset] = useState(0);
   const [error, setError] = useState<string>("");
   const [pokemon, setPokemon] = useState<Pokemon[]>([]);
-
   const LIMIT = 20;
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+
+  const init = async () => {
+    setIsLoading(true);
+    try {
+      const { results, next } = await fetchAllPokemon(0, LIMIT);
+      const detailed = await Promise.all(
+        results.map((p: { url: string }) =>
+          fetch(p.url).then((res) => res.json())
+        )
+      );
+      const allTypes = await fetchTypes();
+      setPokemonList(detailed);
+      setFilteredPokemonList(detailed);
+      setTypes(allTypes);
+      setOffset(LIMIT);
+      if (!next) setHasMore(false);
+    } catch (err) {
+      console.error("Init fetch failed:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const init = async () => {
-      setIsLoading(true);
-      try {
-        const { results, next } = await fetchAllPokemon(0, LIMIT);
-        const detailed = await Promise.all(
-          results.map((p: { url: string }) =>
-            fetch(p.url).then((res) => res.json())
-          )
-        );
-        const allTypes = await fetchTypes();
-        setPokemonList(detailed);
-        setFilteredPokemonList(detailed);
-        setTypes(allTypes);
-        setOffset(LIMIT);
-        if (!next) setHasMore(false);
-      } catch (err) {
-        console.error("Init fetch failed:", err);
-      } finally {
-        setIsLoading(false);
-      }
-    };
     init();
   }, []);
 
@@ -61,7 +60,6 @@ export default function SearchForm() {
         await loadMorePokemon();
         return;
       }
-
       setIsLoading(true);
       try {
         const detailed = await fetchPokemonByType(selectedType);
@@ -74,12 +72,10 @@ export default function SearchForm() {
         setIsLoading(false);
       }
     };
-
     fetchByType();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedType]);
 
-  // Handle search
   useEffect(() => {
     if (!searchValue) {
       setSearchSubmitted(false);
@@ -89,6 +85,7 @@ export default function SearchForm() {
   }, [searchValue, pokemonList]);
 
   const loadMorePokemon = async () => {
+    if (!hasMore || isLoading) return;
     setIsLoading(true);
     try {
       const { results, next } = await fetchAllPokemon(offset, LIMIT);
@@ -109,34 +106,23 @@ export default function SearchForm() {
   };
 
   const handleSearch = async () => {
+    if (searchSubmitted) return;
     setError("");
     setSearchSubmitted(true);
-
     if (!searchValue) {
       setFilteredPokemonList(pokemonList);
       setPokemon([]);
       return;
     }
-
     setIsLoading(true);
     try {
       const data = await searchPokemonByName(searchValue);
       setPokemon([data]);
-    } catch (err ) {
-      setPokemon([]); 
-      console.error(err)
-      
+    } catch (err) {
+      setPokemon([]);
+      console.error(err);
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleItemsRendered = (
-    { visibleStopIndex }: { visibleStopIndex: number },
-    rowCount: number
-  ) => {
-    if (visibleStopIndex >= rowCount - 1 && hasMore && !isLoading) {
-      loadMorePokemon();
     }
   };
 
@@ -146,42 +132,41 @@ export default function SearchForm() {
     }
   };
 
-  const ROW_HEIGHT = 450;
-
-  const Row = ({ index, style, data }: RowProps) => {
-    const { itemsPerRow, list } = data;
-    const startIndex = index * itemsPerRow;
-    const rowItems = [];
-
-    for (let i = 0; i < itemsPerRow; i++) {
-      const p = list[startIndex + i];
-      rowItems.push(
-        <div
-          key={p?.id || `empty-${i}`}
-          className="w-full sm:w-1/2 lg:w-1/3 p-2"
-        >
-          {p ? <PokemonCard pokemon={p} /> : null}
-        </div>
-      );
-    }
-
-    return (
-      <div style={style} className="flex flex-wrap w-full">
-        {rowItems}
-      </div>
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (
+          entries[0].isIntersecting &&
+          hasMore &&
+          !isLoading &&
+          !searchSubmitted
+        ) {
+          loadMorePokemon();
+        }
+      },
+      { threshold: 1.0 }
     );
-  };
+    if (loadMoreRef.current) {
+      observer.observe(loadMoreRef.current);
+    }
+    return () => {
+      if (loadMoreRef.current) {
+        observer.unobserve(loadMoreRef.current);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMore, isLoading, searchSubmitted]);
 
   return (
     <div className="bg-gray-200 mb-6 p-4 rounded-lg">
       <form
-        className="sticky top-0 z-10 bg-gray-200 p-4 flex flex-col gap-4 w-full"
+        className="sticky top-0 z-10 bg-gray-200 p-4 flex flex-col md:flex-col gap-4 w-full"
         onSubmit={(e) => {
           e.preventDefault();
           handleSearch();
         }}
       >
-        <div className="relative w-[40%]">
+        <div className="relative w-[40%] md:w-[40%]">
           <div className="absolute inset-y-0 right-5 flex items-center pl-3 pointer-events-none">
             <svg
               className="w-4 h-4 text-gray-500"
@@ -202,16 +187,22 @@ export default function SearchForm() {
             value={selectedType}
             onChange={(e) => setSelectedType(e.target.value)}
           >
-            <option value="all">Select...</option>
+            <option value="all" className="sm:text-2xl lg:text-xl md:text-xl">
+              All
+            </option>
             {types.map((type) => (
-              <option key={type} value={type} className="capitalize">
+              <option
+                key={type}
+                value={type}
+                className="capitalize sm:text-2xl lg:text-xl md:text-xl"
+              >
                 {type}
               </option>
             ))}
           </select>
         </div>
 
-        <div className="relative w-[60%]">
+        <div className="relative w-full md:w-[60%]">
           <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
             <svg
               className="w-4 h-4 text-gray-400"
@@ -235,21 +226,32 @@ export default function SearchForm() {
             value={searchValue}
             onChange={(e) => setSearchValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            className="block p-2.5 pl-10 w-full text-sm text-gray-900 bg-white rounded-lg"
+            className="block p-2.5 pl-10 w-full text-gray-900 bg-white rounded-lg md:text-sm text-xs md:py-2.5 py-2"
           />
           <button
             type="submit"
-            className="absolute top-0 end-0 h-full px-4 text-sm font-medium text-white bg-[#143D60] rounded-e-lg"
+            className={`absolute top-0 end-0 h-full px-4 text-xs md:text-sm font-medium text-white rounded-e-lg ${
+              !searchValue.trim()
+                ? "bg-gray-400 cursor-not-allowed"
+                : "bg-[#143D60] cursor-pointer"
+            }`}
+            disabled={!searchValue.trim()}
           >
             Search
           </button>
         </div>
       </form>
 
-      {isLoading ? (
-        <p className="text-center text-2xl text-gray-500">Loading...</p>
+      {isLoading && pokemon.length === 0 && !searchSubmitted ? (
+        <p className="text-center text-2xl text-gray-500 min-h-screen">
+          Loading...
+        </p>
+      ) : isLoading && pokemon.length === 0 ? (
+        <p className="text-center text-xl text-gray-500 mt-6 min-h-screen">
+          Searching...
+        </p>
       ) : searchSubmitted && pokemon.length === 0 ? (
-        <p className="text-center text-xl text-red-300 mt-6">
+        <p className="text-center text-xl text-red-300 mt-6 min-h-screen">
           No Pokémon Found
         </p>
       ) : pokemon.length > 0 || error ? (
@@ -258,33 +260,18 @@ export default function SearchForm() {
             <PokemonCard key={p.id} pokemon={p} />
           ))}
         </div>
-      ) : !searchSubmitted ? (
-        <div className="h-[80vh] w-full overflow-auto scrollbar-hide">
-          <AutoSizer>
-            {({ height, width }) => {
-              const itemsPerRow = width >= 1024 ? 3 : width >= 640 ? 2 : 1;
-              const rowCount = Math.ceil(
-                filteredPokemonList.length / itemsPerRow
-              );
-
-              return (
-                <List
-                  height={height}
-                  width={width}
-                  itemCount={rowCount}
-                  itemSize={ROW_HEIGHT}
-                  onItemsRendered={(props) =>
-                    handleItemsRendered(props, rowCount)
-                  }
-                  itemData={{ itemsPerRow, list: filteredPokemonList }}
-                >
-                  {Row}
-                </List>
-              );
-            }}
-          </AutoSizer>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
+          {filteredPokemonList.map((p) => (
+            <PokemonCard key={p.id} pokemon={p} />
+          ))}
+          {hasMore && (
+            <div ref={loadMoreRef} className="col-span-full text-center py-6">
+              {isLoading ? "Loading more..." : "Scroll to load more"}
+            </div>
+          )}
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
