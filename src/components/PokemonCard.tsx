@@ -5,7 +5,7 @@ import { pokemon } from "../types/types";
 export default function PokemonCard({ pokemon }: { pokemon: pokemon }) {
   return (
     <div
-      className="max-w-sm bg-white  rounded-lg shadow-sm overflow-hidden dark:bg-gray-800 dark:border-gray-700 flex flex-col h-100"
+      className="max-w-sm bg-white  rounded-lg shadow-sm overflow-hidden dark:border-gray-700 flex flex-col h-100"
       onClick={() => {
         window.location.href = `/${pokemon.name}`;
       }}
